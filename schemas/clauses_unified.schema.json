@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UnifiedDraftClauses",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "order",
+      "section",
+      "local_num",
+      "id",
+      "title",
+      "text",
+      "page_start",
+      "page_end",
+      "candidate_block_ids",
+      "title_line_ids",
+      "body_line_ids",
+      "support_score"
+    ],
+    "properties": {
+      "order": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "section": {
+        "type": "string"
+      },
+      "local_num": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "id": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "text": {
+        "type": "string"
+      },
+      "page_start": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "page_end": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "candidate_block_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "title_line_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "body_line_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "support_score": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  }
+}

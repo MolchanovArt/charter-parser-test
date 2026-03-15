@@ -48,6 +48,13 @@ Replace the current two-script solution with one pipeline that preserves or impr
 - noise candidates;
 - strike filtering hooks.
 
+##### Current experiment — `m2_unified_candidate_generation_v1`
+- consume `page_ir.jsonl` + `layout_profile.json`;
+- emit deterministic `candidate_blocks.jsonl` with traceable line ids and routing decisions;
+- assemble a unified draft clause output from source lines only, with no LLM/VLM use;
+- emit candidate-level and assembly-level reports with explicit proxy metrics and concrete failures;
+- compare unified output against both legacy baseline and frozen reference without changing legacy behavior.
+
 #### M4 — assembly + validators
 - assemble clauses deterministically;
 - add leakage and split/merge checks;

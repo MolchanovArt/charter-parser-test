@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CandidateBlocks",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "block_id",
+    "page",
+    "page_type",
+    "routing_mode",
+    "section_hint",
+    "block_type",
+    "line_ids",
+    "title_line_ids",
+    "body_line_ids",
+    "noise_line_ids",
+    "line_decisions",
+    "title_text",
+    "body_text",
+    "support_score",
+    "reasons"
+  ],
+  "properties": {
+    "block_id": {
+      "type": "string"
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "page_type": {
+      "type": "string"
+    },
+    "routing_mode": {
+      "type": "string"
+    },
+    "section_hint": {
+      "type": "string"
+    },
+    "block_type": {
+      "type": "string",
+      "enum": [
+        "candidate_clause_start",
+        "candidate_continuation",
+        "noise_block",
+        "section_banner"
+      ]
+    },
+    "line_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "title_line_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "body_line_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "noise_line_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "line_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "line_id",
+          "raw_text",
+          "extracted_text",
+          "labels",
+          "reasons"
+        ],
+        "properties": {
+          "line_id": {
+            "type": "string"
+          },
+          "raw_text": {
+            "type": "string"
+          },
+          "extracted_text": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "title_line",
+                "body_line",
+                "noise_line",
+                "candidate_clause_start",
+                "candidate_continuation",
+                "section_banner"
+              ]
+            }
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "candidate_clause_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "candidate_local_num": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "title_text": {
+      "type": "string"
+    },
+    "body_text": {
+      "type": "string"
+    },
+    "support_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
