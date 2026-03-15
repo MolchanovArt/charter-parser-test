@@ -28,6 +28,17 @@ def baseline(
 
 
 @app.command()
+def unified(
+    pdf: str = typer.Option("data/raw/voyage-charter-example.pdf", help="Path to source PDF"),
+    out: str = typer.Option("artifacts/runs/latest/clauses_unified.json", help="Path to unified draft JSON"),
+    config: str = typer.Option("configs/default.yaml", help="Path to YAML config"),
+) -> None:
+    settings = load_settings(config)
+    clauses = run_pipeline(pdf, out, settings, mode="unified")
+    typer.echo(f"Wrote {len(clauses)} unified draft clauses to {out}")
+
+
+@app.command()
 def probe(
     pdf: str = typer.Option("data/raw/voyage-charter-example.pdf", help="Path to source PDF"),
     config: str = typer.Option("configs/default.yaml", help="Path to YAML config"),

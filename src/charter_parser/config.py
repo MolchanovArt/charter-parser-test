@@ -31,6 +31,21 @@ class ParsingConfig(BaseModel):
     low_confidence_page_threshold: float = 0.55
 
 
+class CandidateConfig(BaseModel):
+    body_band_left_tolerance: float = 12.0
+    right_noise_min_x_ratio: float = 0.83
+    right_noise_max_chars: int = 4
+    header_max_y_ratio: float = 0.10
+    footer_min_y_ratio: float = 0.94
+    title_continuation_max_gap: float = 26.0
+    inline_title_max_chars: int = 90
+    inline_title_upper_ratio: float = 0.55
+    inline_title_max_commas: int = 1
+    title_suspicious_max_chars: int = 140
+    body_suspicious_short_chars: int = 12
+    title_body_overlap_gap: float = 10.0
+
+
 class LLMConfig(BaseModel):
     enabled: bool = True
     model_primary: str = os.getenv("OPENAI_MODEL_PRIMARY", "gpt-5.4")
@@ -53,6 +68,7 @@ class Settings(BaseModel):
     project: ProjectConfig = ProjectConfig()
     legacy: LegacyConfig = LegacyConfig()
     parsing: ParsingConfig = ParsingConfig()
+    candidate: CandidateConfig = CandidateConfig()
     llm: LLMConfig = LLMConfig()
     vision: VisionConfig = VisionConfig()
 

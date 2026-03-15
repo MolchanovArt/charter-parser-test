@@ -18,6 +18,20 @@ parsing:
   line_group_y_tol: 2.5
   low_confidence_page_threshold: 0.55
 
+candidate:
+  body_band_left_tolerance: 12.0
+  right_noise_min_x_ratio: 0.83
+  right_noise_max_chars: 4
+  header_max_y_ratio: 0.10
+  footer_min_y_ratio: 0.94
+  title_continuation_max_gap: 26.0
+  inline_title_max_chars: 90
+  inline_title_upper_ratio: 0.55
+  inline_title_max_commas: 1
+  title_suspicious_max_chars: 140
+  body_suspicious_short_chars: 12
+  title_body_overlap_gap: 10.0
+
 llm:
   enabled: true
   model_primary: gpt-5.4
