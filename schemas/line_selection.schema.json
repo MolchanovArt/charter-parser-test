@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LineSelectionDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "page",
+    "block_id",
+    "decision",
+    "title_line_ids",
+    "body_line_ids",
+    "attach_to_previous",
+    "confidence",
+    "reason_short"
+  ],
+  "properties": {
+    "page": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "block_id": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "new_clause",
+        "continue_previous",
+        "noise",
+        "section_banner"
+      ]
+    },
+    "display_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title_line_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "body_line_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "attach_to_previous": {
+      "type": "boolean"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "reason_short": {
+      "type": "string"
+    }
+  }
+}

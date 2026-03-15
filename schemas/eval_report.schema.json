@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvalReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "mode",
+    "started_at",
+    "finished_at",
+    "golden_path",
+    "candidate_path",
+    "metrics"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "command": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "golden_path": {
+      "type": "string"
+    },
+    "candidate_path": {
+      "type": "string"
+    },
+    "archived_report_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "artifact_provenance": {
+      "type": "object"
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "freshness": {
+      "type": "object"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

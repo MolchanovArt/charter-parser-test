@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "charter-parser"
+version = "0.1.0"
+description = "Geometry-first charter party parser with narrow LLM/VLM fallback"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.100.0",
+  "pydantic>=2.8.0",
+  "PyYAML>=6.0.1",
+  "PyMuPDF>=1.25.0",
+  "numpy>=1.26.0",
+  "pandas>=2.2.0",
+  "pdfplumber>=0.11.0",
+  "rapidfuzz>=3.9.0",
+  "jsonschema>=4.23.0",
+  "typer>=0.12.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

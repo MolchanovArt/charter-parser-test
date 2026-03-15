@@ -1,0 +1,35 @@
+project:
+  pdf_path: data/raw/voyage-charter-example.pdf
+  output_path: artifacts/runs/latest/clauses.json
+  golden_path: artifacts/golden/clauses_merged.json
+
+legacy:
+  part2_page_from: 5
+  part2_page_to: 16
+  riders_page_from: 17
+  riders_page_to: 38
+
+parsing:
+  infer_layout: true
+  infer_sections: true
+  prefer_margin_titles: true
+  drop_strikethrough: true
+  source_of_truth: lines
+  line_group_y_tol: 2.5
+  low_confidence_page_threshold: 0.55
+
+llm:
+  enabled: true
+  model_primary: gpt-5.4
+  model_fast: gpt-5-mini
+  reasoning_effort_primary: medium
+  reasoning_effort_fast: low
+  use_structured_outputs: true
+  store: false
+  accept_confidence: 0.90
+  adjudicate_confidence: 0.65
+
+vision:
+  enabled: true
+  only_on_fallback: true
+  min_page_confidence: 0.50

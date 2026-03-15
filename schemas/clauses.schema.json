@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClausesOutput",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "order",
+      "section",
+      "local_num",
+      "id",
+      "title",
+      "text",
+      "page_start",
+      "page_end"
+    ],
+    "properties": {
+      "order": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "section": {
+        "type": "string"
+      },
+      "local_num": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "id": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "text": {
+        "type": "string"
+      },
+      "page_start": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "page_end": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  }
+}
