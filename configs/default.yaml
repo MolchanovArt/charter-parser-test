@@ -22,6 +22,10 @@ candidate:
   body_band_left_tolerance: 12.0
   right_noise_min_x_ratio: 0.83
   right_noise_max_chars: 4
+  right_noise_edge_tolerance: 16.0
+  subitem_restart_prev_min_local_num: 20
+  subitem_restart_candidate_max_local_num: 5
+  subitem_restart_page_window: 1
   header_max_y_ratio: 0.10
   footer_min_y_ratio: 0.94
   title_continuation_max_gap: 26.0
@@ -42,6 +46,17 @@ llm:
   store: false
   accept_confidence: 0.90
   adjudicate_confidence: 0.65
+
+adjudication:
+  enabled: true
+  context_lines_before: 2
+  context_lines_after: 4
+  max_cases_per_run: 24
+  nested_restart_prev_min_local_num: 8
+  nested_restart_candidate_max_local_num: 3
+  banner_midpage_min_y_ratio: 0.15
+  banner_sentence_min_chars: 56
+  banner_sentence_max_upper_ratio: 0.45
 
 vision:
   enabled: true

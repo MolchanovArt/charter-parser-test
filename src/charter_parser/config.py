@@ -35,6 +35,10 @@ class CandidateConfig(BaseModel):
     body_band_left_tolerance: float = 12.0
     right_noise_min_x_ratio: float = 0.83
     right_noise_max_chars: int = 4
+    right_noise_edge_tolerance: float = 16.0
+    subitem_restart_prev_min_local_num: int = 20
+    subitem_restart_candidate_max_local_num: int = 5
+    subitem_restart_page_window: int = 1
     header_max_y_ratio: float = 0.10
     footer_min_y_ratio: float = 0.94
     title_continuation_max_gap: float = 26.0
@@ -58,6 +62,18 @@ class LLMConfig(BaseModel):
     adjudicate_confidence: float = 0.65
 
 
+class AdjudicationConfig(BaseModel):
+    enabled: bool = True
+    context_lines_before: int = 2
+    context_lines_after: int = 4
+    max_cases_per_run: int = 24
+    nested_restart_prev_min_local_num: int = 8
+    nested_restart_candidate_max_local_num: int = 3
+    banner_midpage_min_y_ratio: float = 0.15
+    banner_sentence_min_chars: int = 56
+    banner_sentence_max_upper_ratio: float = 0.45
+
+
 class VisionConfig(BaseModel):
     enabled: bool = True
     only_on_fallback: bool = True
@@ -70,6 +86,7 @@ class Settings(BaseModel):
     parsing: ParsingConfig = ParsingConfig()
     candidate: CandidateConfig = CandidateConfig()
     llm: LLMConfig = LLMConfig()
+    adjudication: AdjudicationConfig = AdjudicationConfig()
     vision: VisionConfig = VisionConfig()
 
 

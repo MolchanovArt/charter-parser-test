@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AmbiguityCase",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "bucket",
+    "page",
+    "block_id",
+    "line_id",
+    "section_hint",
+    "candidate_line_ids",
+    "candidate_lines",
+    "line_window",
+    "evidence"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string"
+    },
+    "bucket": {
+      "type": "string",
+      "enum": [
+        "nested_numbering",
+        "false_banner_section"
+      ]
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "block_id": {
+      "type": "string"
+    },
+    "line_id": {
+      "type": "string"
+    },
+    "candidate_clause_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "candidate_local_num": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "section_hint": {
+      "type": "string"
+    },
+    "previous_section": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "previous_clause_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "next_clause_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "candidate_line_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "candidate_lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "line_id",
+          "page",
+          "text"
+        ],
+        "properties": {
+          "line_id": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "line_window": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "line_id",
+          "page",
+          "text"
+        ],
+        "properties": {
+          "line_id": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

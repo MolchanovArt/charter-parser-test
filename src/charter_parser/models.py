@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SpanRef(BaseModel):
@@ -22,6 +22,10 @@ class WordIR(BaseModel):
     y0: float
     x1: float
     y1: float
+    is_struck: bool = False
+    strike_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    strike_sources: list[str] = Field(default_factory=list)
+    strike_min_center_delta: float | None = None
 
 
 class LineIR(BaseModel):
@@ -66,6 +70,9 @@ class CandidateLineDecision(BaseModel):
     line_id: str
     raw_text: str
     extracted_text: str = ""
+    clean_text: str = ""
+    title_text: str = ""
+    body_text: str = ""
     labels: list[
         Literal[
             "title_line",
@@ -97,6 +104,61 @@ class CandidateBlock(BaseModel):
     body_text: str = ""
     support_score: float = Field(default=0.0, ge=0.0, le=1.0)
     reasons: list[str] = Field(default_factory=list)
+
+
+class AmbiguityContextLine(BaseModel):
+    line_id: str
+    page: int = Field(ge=0)
+    text: str
+
+
+class AmbiguityCase(BaseModel):
+    case_id: str
+    bucket: Literal["nested_numbering", "false_banner_section"]
+    page: int = Field(ge=0)
+    block_id: str
+    line_id: str
+    candidate_clause_id: str | None = None
+    candidate_local_num: int | None = Field(default=None, ge=1)
+    section_hint: str
+    previous_section: str | None = None
+    previous_clause_id: str | None = None
+    next_clause_id: str | None = None
+    candidate_line_ids: list[str] = Field(default_factory=list)
+    candidate_lines: list[AmbiguityContextLine] = Field(default_factory=list)
+    line_window: list[AmbiguityContextLine] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class StructuredAdjudicationDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_start: bool
+    attach_to_previous: bool
+    section_hint: str
+    title_line_ids: list[str] = Field(default_factory=list)
+    body_line_ids: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason_short: str
+
+
+class AdjudicationResult(BaseModel):
+    case_id: str
+    bucket: Literal["nested_numbering", "false_banner_section"]
+    page: int = Field(ge=0)
+    block_id: str
+    status: Literal[
+        "accepted",
+        "rejected_low_confidence",
+        "rejected_invalid_line_ids",
+        "skipped_disabled",
+        "skipped_missing_api_key",
+        "error",
+    ]
+    applied: bool = False
+    decision: StructuredAdjudicationDecision | None = None
+    effect: str = "kept_deterministic"
+    error: str | None = None
 
 
 class BoundaryDecision(BaseModel):
