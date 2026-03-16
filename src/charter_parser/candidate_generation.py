@@ -9,6 +9,9 @@ from charter_parser.utils import normalize_ws
 
 
 CLAUSE_START_RE = re.compile(r"^\s*(\d{1,3})\s*\.\s*(.*)$")
+EMBEDDED_CLAUSE_START_RE = re.compile(
+    r"^\s*([A-Z][A-Za-z'/-]*(?:\s+[A-Za-z][A-Za-z'/-]*){0,2})\s+(\d{1,3})\s*\.\s*(.*)$"
+)
 SECTION_PATTERNS = {
     "part2": re.compile(r"\bPART\s+II\b", re.I),
     "shell": re.compile(r"\bSHELL\s+ADDITIONAL\s+CLAUSES\b", re.I),
@@ -71,19 +74,49 @@ def _is_header_footer_noise(raw_text: str, line, page: PageIR, settings: Setting
 
 
 def _detect_section_banner(text: str) -> str | None:
-    for section, pattern in SECTION_PATTERNS.items():
-        if pattern.search(text):
-            return section
+    compact = normalize_ws(text)
+    if not compact:
+        return None
+    upper = compact.upper()
+    if upper == "PART II":
+        return "part2"
+    if upper.startswith("SHELL ADDITIONAL CLAUSES"):
+        return "shell"
+    if upper.startswith("ESSAR RIDER CLAUSES"):
+        return "essar"
     return None
+
+
+def _should_attach_subitem_start(current_block: dict | None, local_num: int, page_index: int, settings: Settings) -> bool:
+    if current_block is None or current_block["block_type"] != "candidate_clause_start":
+        return False
+    previous_local_num = current_block.get("candidate_local_num")
+    if previous_local_num is None:
+        return False
+    if previous_local_num < settings.candidate.subitem_restart_prev_min_local_num:
+        return False
+    if local_num > settings.candidate.subitem_restart_candidate_max_local_num:
+        return False
+    if page_index - current_block["page"] > settings.candidate.subitem_restart_page_window:
+        return False
+    if current_block.get("subitem_group_active"):
+        return True
+    title_text = normalize_ws(" ".join(current_block.get("title_parts", []))).lower()
+    if "clause" not in title_text:
+        return False
+    if current_block.get("body_parts"):
+        return False
+    return True
 
 
 def _split_line(line, page: PageIR, page_profile, settings: Settings, words_by_id: dict[str, dict]) -> dict:
     bands = _band_map(page_profile)
     body_band = bands.get("body_band_hint", (line.bbox[0], page.width, 0.0))
     body_x0 = body_band[0]
+    body_x1 = body_band[1]
     right_noise_x = max(
         page.width * settings.candidate.right_noise_min_x_ratio,
-        body_band[1] - settings.candidate.title_body_overlap_gap,
+        body_x1 - settings.candidate.right_noise_edge_tolerance,
     )
     tol = settings.candidate.body_band_left_tolerance
     words = [words_by_id[word_id] for word_id in line.word_ids if word_id in words_by_id]
@@ -91,9 +124,17 @@ def _split_line(line, page: PageIR, page_profile, settings: Settings, words_by_i
     left_words: list[dict] = []
     body_words: list[dict] = []
     noise_words: list[dict] = []
+    struck_words: list[dict] = []
     for word in sorted(words, key=lambda item: item["x0"]):
+        if word.get("is_struck"):
+            struck_words.append(word)
+            continue
         token = str(word["text"]).strip()
-        if token.isdigit() and len(token) <= settings.candidate.right_noise_max_chars and word["x0"] >= right_noise_x:
+        if (
+            token.isdigit()
+            and len(token) <= settings.candidate.right_noise_max_chars
+            and (word["x0"] >= right_noise_x or word["x1"] >= body_x1 - 1.0)
+        ):
             noise_words.append(word)
             continue
         if re.fullmatch(r"\d{1,3}\.", token):
@@ -112,6 +153,7 @@ def _split_line(line, page: PageIR, page_profile, settings: Settings, words_by_i
         "clean_text": _join_words(clean_words),
         "noise_text": _join_words(noise_words),
         "noise_word_count": len(noise_words),
+        "struck_word_count": len(struck_words),
     }
 
 
@@ -120,6 +162,18 @@ def _start_match(text: str) -> tuple[int, str] | None:
     if not match:
         return None
     return int(match.group(1)), normalize_ws(match.group(2))
+
+
+def _embedded_start_match(text: str) -> tuple[str, int, str] | None:
+    match = EMBEDDED_CLAUSE_START_RE.match(text)
+    if not match:
+        return None
+    prefix = normalize_ws(match.group(1))
+    local_num = int(match.group(2))
+    remainder = normalize_ws(match.group(3))
+    if local_num < 1 or not prefix or not remainder:
+        return None
+    return prefix, local_num, remainder
 
 
 def _new_block(
@@ -153,7 +207,17 @@ def _new_block(
     }
 
 
-def _append_line(block: dict, line, extracted_text: str, labels: list[str], reasons: list[str]) -> None:
+def _append_line(
+    block: dict,
+    line,
+    *,
+    extracted_text: str,
+    clean_text: str,
+    title_text: str,
+    body_text: str,
+    labels: list[str],
+    reasons: list[str],
+) -> None:
     if line.line_id not in block["line_ids"]:
         block["line_ids"].append(line.line_id)
     if "title_line" in labels and line.line_id not in block["title_line_ids"]:
@@ -167,6 +231,9 @@ def _append_line(block: dict, line, extracted_text: str, labels: list[str], reas
             line_id=line.line_id,
             raw_text=line.text,
             extracted_text=extracted_text,
+            clean_text=clean_text,
+            title_text=title_text,
+            body_text=body_text,
             labels=labels,
             reasons=reasons,
         ).model_dump()
@@ -259,7 +326,16 @@ def generate_candidate_blocks(pages: list[PageIR], profile: LayoutProfile, setti
                         routing_mode=page_profile.page_type,
                         reasons=["right_noise_only_line"],
                     )
-                    _append_line(noise_block, line, "", ["noise_line"], ["right_noise_only_line"])
+                    _append_line(
+                        noise_block,
+                        line,
+                        extracted_text="",
+                        clean_text="",
+                        title_text="",
+                        body_text="",
+                        labels=["noise_line"],
+                        reasons=["right_noise_only_line"],
+                    )
                     blocks.append(_finalize_block(noise_block))
                     page_summary["noise_blocks"] += 1
                 continue
@@ -290,9 +366,12 @@ def generate_candidate_blocks(pages: list[PageIR], profile: LayoutProfile, setti
                 _append_line(
                     banner_block,
                     line,
-                    "",
-                    ["noise_line", "section_banner"],
-                    [f"section_banner:{section_banner}"],
+                    extracted_text="",
+                    clean_text=clean_text,
+                    title_text="",
+                    body_text="",
+                    labels=["noise_line", "section_banner"],
+                    reasons=[f"section_banner:{section_banner}"],
                 )
                 blocks.append(_finalize_block(banner_block))
                 page_summary["noise_blocks"] += 1
@@ -311,19 +390,53 @@ def generate_candidate_blocks(pages: list[PageIR], profile: LayoutProfile, setti
                     routing_mode=page_profile.page_type,
                     reasons=[noise_reason],
                 )
-                _append_line(noise_block, line, "", ["noise_line"], [noise_reason])
+                _append_line(
+                    noise_block,
+                    line,
+                    extracted_text="",
+                    clean_text=clean_text,
+                    title_text="",
+                    body_text="",
+                    labels=["noise_line"],
+                    reasons=[noise_reason],
+                )
                 blocks.append(_finalize_block(noise_block))
                 page_summary["noise_blocks"] += 1
                 continue
 
             body_start = _start_match(body_text)
             clean_start = _start_match(clean_text)
+            embedded_start = None
+            if body_start is None and clean_start is None:
+                embedded_start = _embedded_start_match(body_text) or _embedded_start_match(clean_text)
             start = body_start or clean_start
-            if start:
+            if start or embedded_start:
+                if embedded_start is not None:
+                    embedded_title, local_num, remainder = embedded_start
+                else:
+                    embedded_title = ""
+                    local_num, remainder = start
+                if _should_attach_subitem_start(current_block, local_num, page.page_index, settings):
+                    current_block["subitem_group_active"] = True
+                    body_payload = clean_text
+                    current_block["body_parts"].append(body_payload)
+                    _append_line(
+                        current_block,
+                        line,
+                        extracted_text=body_payload,
+                        clean_text=clean_text,
+                        title_text="",
+                        body_text=body_payload,
+                        labels=["candidate_continuation", "body_line"],
+                        reasons=[f"subitem_restart_attach:{local_num}"],
+                    )
+                    diagnostics["body_line_count"] += 1
+                    if 0 < len(body_payload) <= settings.candidate.body_suspicious_short_chars:
+                        diagnostics["suspicious_body_lines"] += 1
+                    continue
                 if current_block is not None:
                     blocks.append(_finalize_block(current_block))
                     current_block = None
-                local_num, remainder = start
                 current_block = _new_block(
                     block_id=f"p{page.page_index}_start_{len(blocks):04d}",
                     page_index=page.page_index,
@@ -338,7 +451,15 @@ def generate_candidate_blocks(pages: list[PageIR], profile: LayoutProfile, setti
                 labels = ["candidate_clause_start"]
                 reasons = [f"start_regex:{local_num}"]
                 body_payload = ""
-                if left_text:
+                title_payload = ""
+                if embedded_title:
+                    title_payload = embedded_title
+                    current_block["title_parts"].append(title_payload)
+                    current_block["embedded_title_open"] = True
+                    labels.append("title_line")
+                    reasons.append("embedded_inline_start")
+                    body_payload = remainder
+                elif left_text:
                     title_payload = _strip_clause_prefix(left_text)
                     if title_payload:
                         current_block["title_parts"].append(title_payload)
@@ -356,7 +477,16 @@ def generate_candidate_blocks(pages: list[PageIR], profile: LayoutProfile, setti
                     current_block["body_parts"].append(body_payload)
                     labels.append("body_line")
                     reasons.append("body_payload_from_start")
-                _append_line(current_block, line, normalize_ws(remainder or clean_text), labels, reasons)
+                _append_line(
+                    current_block,
+                    line,
+                    extracted_text=normalize_ws(remainder or clean_text),
+                    clean_text=clean_text,
+                    title_text=title_payload,
+                    body_text=body_payload,
+                    labels=labels,
+                    reasons=reasons,
+                )
                 page_summary["start_blocks"] += 1
                 if "title_line" in labels:
                     diagnostics["title_line_count"] += 1
@@ -383,15 +513,39 @@ def generate_candidate_blocks(pages: list[PageIR], profile: LayoutProfile, setti
 
             labels = ["candidate_continuation"]
             reasons = ["continuation_body"]
-            if left_text and page_profile.page_type == "margin_title_like":
+            title_payload = ""
+            if current_block.get("embedded_title_open"):
+                title_match = re.match(r"^\s*([a-z][a-z'/-]{2,})\s+(.*)$", clean_text)
+                current_block["embedded_title_open"] = False
+                if title_match:
+                    title_payload = normalize_ws(title_match.group(1))
+                    current_block["title_parts"].append(title_payload)
+                    labels.append("title_line")
+                    reasons.append("embedded_title_continuation")
+                    body_payload = normalize_ws(title_match.group(2))
+                else:
+                    body_payload = body_text or clean_text
+            elif left_text and page_profile.page_type == "margin_title_like":
                 current_block["title_parts"].append(left_text)
+                title_payload = left_text
                 labels.append("title_line")
                 reasons.append("margin_title_continuation")
-            body_payload = body_text or clean_text
+                body_payload = body_text or clean_text
+            else:
+                body_payload = body_text or clean_text
             if body_payload:
                 current_block["body_parts"].append(body_payload)
                 labels.append("body_line")
-            _append_line(current_block, line, body_payload, labels, reasons)
+            _append_line(
+                current_block,
+                line,
+                extracted_text=body_payload,
+                clean_text=clean_text,
+                title_text=title_payload,
+                body_text=body_payload,
+                labels=labels,
+                reasons=reasons,
+            )
             if "title_line" in labels:
                 diagnostics["title_line_count"] += 1
                 if len(left_text) > settings.candidate.title_suspicious_max_chars:
@@ -413,6 +567,7 @@ def generate_candidate_blocks(pages: list[PageIR], profile: LayoutProfile, setti
 
     metrics = {
         "pages_by_routing_mode": dict(Counter(summary["routing_mode"] for summary in diagnostics["page_summaries"])),
+        "candidate_block_count": len(blocks),
         "candidate_clause_start_count": sum(1 for block in blocks if block.block_type == "candidate_clause_start"),
         "candidate_continuation_count": sum(1 for block in blocks if block.block_type == "candidate_continuation"),
         "noise_block_count": sum(1 for block in blocks if block.block_type in {"noise_block", "section_banner"}),

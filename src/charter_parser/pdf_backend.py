@@ -5,6 +5,7 @@ from pathlib import Path
 import fitz
 
 from charter_parser.models import PageIR, WordIR
+from charter_parser.strike_filter import mark_struck_words
 
 
 class PyMuPDFBackend:
@@ -37,7 +38,7 @@ class PyMuPDFBackend:
                     y1=float(y1),
                 )
             )
-        return out
+        return mark_struck_words(out, page.get_drawings() or [])
 
     def extract_page_ir(self, page_index: int) -> PageIR:
         width, height = self.page_size(page_index)

@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AdjudicationResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "bucket",
+    "page",
+    "block_id",
+    "status",
+    "applied",
+    "effect"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string"
+    },
+    "bucket": {
+      "type": "string",
+      "enum": [
+        "nested_numbering",
+        "false_banner_section"
+      ]
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "block_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "rejected_low_confidence",
+        "rejected_invalid_line_ids",
+        "skipped_disabled",
+        "skipped_missing_api_key",
+        "error"
+      ]
+    },
+    "applied": {
+      "type": "boolean"
+    },
+    "effect": {
+      "type": "string"
+    },
+    "decision": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "candidate_start",
+        "attach_to_previous",
+        "section_hint",
+        "title_line_ids",
+        "body_line_ids",
+        "confidence",
+        "reason_short"
+      ],
+      "properties": {
+        "candidate_start": {
+          "type": "boolean"
+        },
+        "attach_to_previous": {
+          "type": "boolean"
+        },
+        "section_hint": {
+          "type": "string"
+        },
+        "title_line_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "body_line_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reason_short": {
+          "type": "string"
+        }
+      }
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

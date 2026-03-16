@@ -9,6 +9,7 @@ description = "Geometry-first charter party parser with narrow LLM/VLM fallback"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "python-dotenv>=1.0.1",
   "openai>=1.100.0",
   "pydantic>=2.8.0",
   "PyYAML>=6.0.1",

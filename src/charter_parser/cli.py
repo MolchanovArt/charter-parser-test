@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
 
 from charter_parser.config import load_settings
 from charter_parser.pipeline import probe_document, run_pipeline
@@ -12,6 +13,17 @@ from charter_parser.reporting import assert_report_matches_artifact, new_run_id,
 from charter_parser.utils import utc_now_iso
 from charter_parser.validators import validate_clause_file
 
+
+def _load_local_dotenv() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    candidates = [Path.cwd() / ".env", repo_root / ".env"]
+    for env_path in candidates:
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+            break
+
+
+_load_local_dotenv()
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -36,6 +48,20 @@ def unified(
     settings = load_settings(config)
     clauses = run_pipeline(pdf, out, settings, mode="unified")
     typer.echo(f"Wrote {len(clauses)} unified draft clauses to {out}")
+
+
+@app.command("unified-adjudicated")
+def unified_adjudicated(
+    pdf: str = typer.Option("data/raw/voyage-charter-example.pdf", help="Path to source PDF"),
+    out: str = typer.Option(
+        "artifacts/runs/latest/clauses_unified_adjudicated.json",
+        help="Path to adjudicated unified draft JSON",
+    ),
+    config: str = typer.Option("configs/default.yaml", help="Path to YAML config"),
+) -> None:
+    settings = load_settings(config)
+    clauses = run_pipeline(pdf, out, settings, mode="unified_adjudicated")
+    typer.echo(f"Wrote {len(clauses)} adjudicated unified draft clauses to {out}")
 
 
 @app.command()

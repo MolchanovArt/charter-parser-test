@@ -65,6 +65,14 @@ Replace the current two-script solution with one pipeline that preserves or impr
 - return `line_ids`, labels, attach decisions, confidence;
 - keep deterministic final text assembly.
 
+##### Current experiment — `m3_structured_ambiguity_adjudication_v1`
+- keep the M2 unified deterministic path as the default source of candidate text and ordering;
+- extract only ambiguous local windows for two buckets: nested numbering starts and false banner / section switches;
+- call `gpt-5.4` with schema-constrained outputs limited to `candidate_start`, `attach_to_previous`, `section_hint`, optional `title_line_ids`, optional `body_line_ids`, `confidence`, and `reason_short`;
+- apply adjudication only when the deterministic signal is ambiguous enough to justify intervention;
+- emit adjudication request/response artifacts plus reports that compare deterministic-only vs adjudicated unified output;
+- do not add VLM fallback, clause-text generation, multi-model orchestration, or cost-optimization work in this slice.
+
 #### M6 — selective visual fallback
 - only on flagged pages or cropped regions;
 - compare recovery vs cost;

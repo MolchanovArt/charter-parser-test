@@ -79,6 +79,9 @@
           "line_id",
           "raw_text",
           "extracted_text",
+          "clean_text",
+          "title_text",
+          "body_text",
           "labels",
           "reasons"
         ],
@@ -90,6 +93,15 @@
             "type": "string"
           },
           "extracted_text": {
+            "type": "string"
+          },
+          "clean_text": {
+            "type": "string"
+          },
+          "title_text": {
+            "type": "string"
+          },
+          "body_text": {
             "type": "string"
           },
           "labels": {
