@@ -7,6 +7,7 @@ from charter_parser.models import WordIR
 
 DEFAULT_Y_BAND = 1.1
 DEFAULT_MIN_WORD_COV = 0.45
+DEFAULT_CENTER_TOLERANCE_RATIO = 0.16
 
 
 def _rect_to_segment(rect, source: str, min_width: float = 25.0, max_height: float = 1.5) -> dict | None:
@@ -49,17 +50,68 @@ def collect_vector_strike_segments(drawings: Iterable[dict]) -> list[dict]:
     return [unique[key] for key in sorted(unique)]
 
 
-def strike_evidence(word: WordIR, segs: list[dict], y_band: float = DEFAULT_Y_BAND) -> tuple[float, list[str], float | None]:
+def _center_tolerance(y0: float, y1: float, y_band: float, center_tolerance_ratio: float) -> float:
+    return max(float(y_band), max(0.0, float(y1) - float(y0)) * float(center_tolerance_ratio))
+
+
+def strike_union_coverage(
+    bbox: tuple[float, float, float, float] | list[float] | None,
+    segs: list[dict],
+    *,
+    y_band: float = DEFAULT_Y_BAND,
+    center_tolerance_ratio: float = DEFAULT_CENTER_TOLERANCE_RATIO,
+) -> tuple[float, int]:
+    if bbox is None:
+        return 0.0, 0
+    x0, y0, x1, y1 = [float(value) for value in bbox]
+    if x1 <= x0:
+        return 0.0, 0
+    y_mid = (y0 + y1) / 2.0
+    tolerance = _center_tolerance(y0, y1, y_band, center_tolerance_ratio)
+    width = x1 - x0
+    intervals: list[tuple[float, float]] = []
+    for seg in segs:
+        if abs(float(seg["y"]) - y_mid) > tolerance:
+            continue
+        lo = max(x0, float(seg["x0"]))
+        hi = min(x1, float(seg["x1"]))
+        if hi <= lo:
+            continue
+        intervals.append((lo, hi))
+    if not intervals:
+        return 0.0, 0
+    intervals.sort()
+    merged: list[tuple[float, float]] = []
+    cur_lo, cur_hi = intervals[0]
+    for lo, hi in intervals[1:]:
+        if lo <= cur_hi + 1.0:
+            cur_hi = max(cur_hi, hi)
+        else:
+            merged.append((cur_lo, cur_hi))
+            cur_lo, cur_hi = lo, hi
+    merged.append((cur_lo, cur_hi))
+    covered = sum(hi - lo for lo, hi in merged)
+    return min(1.0, covered / width), len(intervals)
+
+
+def strike_evidence(
+    word: WordIR,
+    segs: list[dict],
+    y_band: float = DEFAULT_Y_BAND,
+    *,
+    center_tolerance_ratio: float = DEFAULT_CENTER_TOLERANCE_RATIO,
+) -> tuple[float, list[str], float | None]:
     width = float(word.x1 - word.x0)
     if width <= 0:
         return 0.0, [], None
     y_mid = float((word.y0 + word.y1) / 2.0)
+    tolerance = _center_tolerance(word.y0, word.y1, y_band, center_tolerance_ratio)
     intervals: list[tuple[float, float]] = []
     sources: set[str] = set()
     min_center_delta: float | None = None
     for seg in segs:
         delta = abs(float(seg["y"]) - y_mid)
-        if delta > y_band:
+        if delta > tolerance:
             continue
         lo = max(float(word.x0), float(seg["x0"]))
         hi = min(float(word.x1), float(seg["x1"]))
@@ -90,13 +142,19 @@ def mark_struck_words(
     *,
     y_band: float = DEFAULT_Y_BAND,
     min_cov: float = DEFAULT_MIN_WORD_COV,
+    center_tolerance_ratio: float = DEFAULT_CENTER_TOLERANCE_RATIO,
 ) -> list[WordIR]:
     segs = collect_vector_strike_segments(drawings)
     if not segs:
         return words
     out: list[WordIR] = []
     for word in words:
-        coverage, sources, center_delta = strike_evidence(word, segs, y_band=y_band)
+        coverage, sources, center_delta = strike_evidence(
+            word,
+            segs,
+            y_band=y_band,
+            center_tolerance_ratio=center_tolerance_ratio,
+        )
         out.append(
             word.model_copy(
                 update={

@@ -18,6 +18,17 @@ parsing:
   line_group_y_tol: 2.5
   low_confidence_page_threshold: 0.55
 
+strike:
+  y_band: 1.1
+  center_tolerance_ratio: 0.16
+  min_word_coverage: 0.45
+  full_line_coverage: 0.85
+  block_start_coverage: 0.60
+  block_end_coverage: 0.25
+  block_end_patience: 3
+  block_max_run: 80
+  live_start_max_coverage: 0.10
+
 candidate:
   body_band_left_tolerance: 12.0
   right_noise_min_x_ratio: 0.83

@@ -9,9 +9,19 @@ from charter_parser.strike_filter import mark_struck_words
 
 
 class PyMuPDFBackend:
-    def __init__(self, pdf_path: str | Path):
+    def __init__(
+        self,
+        pdf_path: str | Path,
+        *,
+        strike_y_band: float = 1.1,
+        strike_min_cov: float = 0.45,
+        strike_center_tolerance_ratio: float = 0.16,
+    ):
         self.pdf_path = str(pdf_path)
         self.doc = fitz.open(self.pdf_path)
+        self.strike_y_band = strike_y_band
+        self.strike_min_cov = strike_min_cov
+        self.strike_center_tolerance_ratio = strike_center_tolerance_ratio
 
     def page_count(self) -> int:
         return self.doc.page_count
@@ -38,7 +48,13 @@ class PyMuPDFBackend:
                     y1=float(y1),
                 )
             )
-        return mark_struck_words(out, page.get_drawings() or [])
+        return mark_struck_words(
+            out,
+            page.get_drawings() or [],
+            y_band=self.strike_y_band,
+            min_cov=self.strike_min_cov,
+            center_tolerance_ratio=self.strike_center_tolerance_ratio,
+        )
 
     def extract_page_ir(self, page_index: int) -> PageIR:
         width, height = self.page_size(page_index)

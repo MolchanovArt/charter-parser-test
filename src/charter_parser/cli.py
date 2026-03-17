@@ -7,7 +7,7 @@ import typer
 from dotenv import load_dotenv
 
 from charter_parser.config import load_settings
-from charter_parser.pipeline import probe_document, run_pipeline
+from charter_parser.pipeline import probe_document, run_pipeline, run_strike_fallback_review
 from charter_parser.models import RunReport
 from charter_parser.reporting import assert_report_matches_artifact, new_run_id, publish_run_report
 from charter_parser.utils import utc_now_iso
@@ -62,6 +62,39 @@ def unified_adjudicated(
     settings = load_settings(config)
     clauses = run_pipeline(pdf, out, settings, mode="unified_adjudicated")
     typer.echo(f"Wrote {len(clauses)} adjudicated unified draft clauses to {out}")
+
+
+@app.command("strike-fallback")
+def strike_fallback(
+    pdf: str = typer.Option("data/raw/voyage-charter-example.pdf", help="Path to source PDF"),
+    source_json: str = typer.Option(
+        "artifacts/runs/latest/clauses_unified_adjudicated.json",
+        help="Path to accepted adjudicated clause JSON to review",
+    ),
+    source_assembly_report: str = typer.Option(
+        "artifacts/runs/latest/assembly_report_adjudicated.json",
+        help="Path to accepted adjudicated assembly report",
+    ),
+    source_bad_clause_review: str = typer.Option(
+        "artifacts/runs/latest/bad_clause_review.json",
+        help="Path to accepted bad-clause review JSON",
+    ),
+    source_strike_diagnostics: str = typer.Option(
+        "artifacts/runs/latest/strike_stage_diagnostics.json",
+        help="Path to accepted strike diagnostics JSON",
+    ),
+    config: str = typer.Option("configs/default.yaml", help="Path to YAML config"),
+) -> None:
+    settings = load_settings(config)
+    clauses = run_strike_fallback_review(
+        pdf,
+        source_json=source_json,
+        source_assembly_report=source_assembly_report,
+        source_bad_clause_review=source_bad_clause_review,
+        source_strike_diagnostics=source_strike_diagnostics,
+        settings=settings,
+    )
+    typer.echo(f"Wrote {len(clauses)} strike-fallback clauses to artifacts/runs/latest/clauses_strike_fallback.json")
 
 
 @app.command()
