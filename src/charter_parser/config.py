@@ -31,6 +31,18 @@ class ParsingConfig(BaseModel):
     low_confidence_page_threshold: float = 0.55
 
 
+class StrikeConfig(BaseModel):
+    y_band: float = 1.1
+    center_tolerance_ratio: float = 0.16
+    min_word_coverage: float = 0.45
+    full_line_coverage: float = 0.85
+    block_start_coverage: float = 0.60
+    block_end_coverage: float = 0.25
+    block_end_patience: int = 3
+    block_max_run: int = 80
+    live_start_max_coverage: float = 0.10
+
+
 class CandidateConfig(BaseModel):
     body_band_left_tolerance: float = 12.0
     right_noise_min_x_ratio: float = 0.83
@@ -84,6 +96,7 @@ class Settings(BaseModel):
     project: ProjectConfig = ProjectConfig()
     legacy: LegacyConfig = LegacyConfig()
     parsing: ParsingConfig = ParsingConfig()
+    strike: StrikeConfig = StrikeConfig()
     candidate: CandidateConfig = CandidateConfig()
     llm: LLMConfig = LLMConfig()
     adjudication: AdjudicationConfig = AdjudicationConfig()

@@ -7,6 +7,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import fitz
+
 from charter_parser.adjudication import (
     adjudication_metrics,
     apply_adjudication_to_blocks,
@@ -20,6 +22,7 @@ from charter_parser.ir import page_ir_with_lines
 from charter_parser.layout_profile import infer_layout_profile
 from charter_parser.models import Clause, DraftClause, LayoutProfile, PageIR, RunReport
 from charter_parser.pdf_backend import PyMuPDFBackend
+from charter_parser.strike_filter import collect_vector_strike_segments, strike_union_coverage
 from charter_parser.reporting import (
     HISTORY_DIR,
     LATEST_DIR,
@@ -228,7 +231,12 @@ def run_legacy_baseline(pdf_path: str | Path, out_path: str | Path, settings: Se
 
 
 def _extract_probe_inputs(pdf_path: str | Path, settings: Settings) -> tuple[list[PageIR], LayoutProfile]:
-    backend = PyMuPDFBackend(pdf_path)
+    backend = PyMuPDFBackend(
+        pdf_path,
+        strike_y_band=settings.strike.y_band,
+        strike_min_cov=settings.strike.min_word_coverage,
+        strike_center_tolerance_ratio=settings.strike.center_tolerance_ratio,
+    )
     pages: list[PageIR] = []
     for page_index in range(backend.page_count()):
         page_ir = backend.extract_page_ir(page_index)
@@ -1052,7 +1060,24 @@ def _line_lookup_from_pages(pages: list[PageIR]) -> dict[str, dict]:
     return {line.line_id: line.model_dump() for page in pages for line in page.lines}
 
 
-def _line_strike_snapshot(line_row: dict, word_by_id: dict[str, dict]) -> dict:
+def _page_strike_segments(pdf_path: str | Path, page_indexes: set[int]) -> dict[int, list[dict]]:
+    doc = fitz.open(str(pdf_path))
+    try:
+        return {
+            page_index: collect_vector_strike_segments(doc.load_page(page_index).get_drawings() or [])
+            for page_index in sorted(page_indexes)
+        }
+    finally:
+        doc.close()
+
+
+def _line_strike_snapshot(
+    line_row: dict,
+    word_by_id: dict[str, dict],
+    *,
+    page_strike_segments: dict[int, list[dict]] | None = None,
+    settings: Settings | None = None,
+) -> dict:
     words = [word_by_id[word_id] for word_id in line_row.get("word_ids", []) if word_id in word_by_id]
     words = sorted(words, key=lambda item: item["x0"])
     raw_text = normalize_ws(" ".join(word["text"] for word in words))
@@ -1073,12 +1098,27 @@ def _line_strike_snapshot(line_row: dict, word_by_id: dict[str, dict]) -> dict:
         else:
             marked_parts.append(token)
             live_parts.append(token)
+    strike_settings = settings.strike if settings is not None else None
+    segs = (page_strike_segments or {}).get(int(line_row["page"]), [])
+    line_strike_coverage = 0.0
+    line_strike_interval_count = 0
+    if segs and line_row.get("bbox") is not None and strike_settings is not None:
+        line_strike_coverage, line_strike_interval_count = strike_union_coverage(
+            line_row["bbox"],
+            segs,
+            y_band=strike_settings.y_band,
+            center_tolerance_ratio=strike_settings.center_tolerance_ratio,
+        )
+        if line_strike_coverage >= strike_settings.full_line_coverage:
+            live_parts = []
     evidence_mode = "none"
     if struck_sources:
         if "line_crossing" in struck_sources:
             evidence_mode = "line_crossing"
         elif "drawing_rect" in struck_sources or "path_rect" in struck_sources:
             evidence_mode = "rect_overlap"
+    if evidence_mode == "none" and line_strike_coverage >= 0.25:
+        evidence_mode = "line_union_coverage"
     if min_center_delta is not None and min_center_delta > 0.55:
         evidence_mode = "off_center_crossing"
     return {
@@ -1092,6 +1132,9 @@ def _line_strike_snapshot(line_row: dict, word_by_id: dict[str, dict]) -> dict:
         "strike_source_counts": dict(sorted(struck_sources.items())),
         "strike_evidence_mode": evidence_mode,
         "strike_min_center_delta": min_center_delta,
+        "line_strike_coverage": round(line_strike_coverage, 4),
+        "line_strike_interval_count": line_strike_interval_count,
+        "full_line_struck": bool(strike_settings is not None and line_strike_coverage >= strike_settings.full_line_coverage),
     }
 
 
@@ -1117,8 +1160,51 @@ def _ends_sentence(text: str) -> bool:
     return compact.endswith((".", ":", ";", "\"", "”", "'"))
 
 
-def _suppressed_body_line_indexes(line_rows: list[dict]) -> set[int]:
+def _is_strong_live_start(raw_text: str, line_strike_coverage: float, settings: Settings) -> bool:
+    text = normalize_ws(raw_text)
+    if not text:
+        return False
+    if line_strike_coverage > settings.strike.live_start_max_coverage:
+        return False
+    if not (CLAUSE_OR_ITEM_START_RE.match(text) or EMBEDDED_INLINE_START_RE.match(text)):
+        return False
+    suffix = re.sub(r"^\s*(?:\(?\d{1,3}[\.\)]|[A-Z][\.\)])\s*", "", text).strip()
+    if not suffix:
+        return False
+    if suffix[:1].islower() and not suffix.isupper():
+        return False
+    return True
+
+
+def _suppressed_body_line_indexes_part2(line_rows: list[dict], settings: Settings) -> set[int]:
     suppressed: set[int] = set()
+    start_thr = settings.strike.block_start_coverage
+    end_thr = settings.strike.block_end_coverage
+    end_patience = settings.strike.block_end_patience
+    max_run = settings.strike.block_max_run
+    i = 0
+    while i < len(line_rows):
+        current_cov = float(line_rows[i].get("line_strike_coverage", 0.0))
+        if current_cov >= start_thr:
+            j = i
+            low_count = 0
+            steps = 0
+            while j < len(line_rows) and steps < max_run:
+                probe_cov = float(line_rows[j].get("line_strike_coverage", 0.0))
+                if j > i and _is_strong_live_start(line_rows[j]["raw_text"], probe_cov, settings):
+                    break
+                suppressed.add(j)
+                if probe_cov < end_thr:
+                    low_count += 1
+                else:
+                    low_count = 0
+                if low_count >= end_patience:
+                    break
+                j += 1
+                steps += 1
+            i = j + 1
+            continue
+        i += 1
     struck_indexes = [idx for idx, row in enumerate(line_rows) if row["struck_word_count"] > 0]
     for idx in struck_indexes:
         current_raw = line_rows[idx]["raw_text"]
@@ -1169,15 +1255,81 @@ def _suppressed_body_line_indexes(line_rows: list[dict]) -> set[int]:
     return suppressed
 
 
+def _suppressed_body_line_indexes_riders(line_rows: list[dict], settings: Settings) -> set[int]:
+    suppressed: set[int] = set()
+    start_thr = settings.strike.block_start_coverage
+    end_thr = settings.strike.block_end_coverage
+    end_patience = settings.strike.block_end_patience
+    max_run = settings.strike.block_max_run
+    i = 0
+    while i < len(line_rows):
+        current_cov = float(line_rows[i].get("line_strike_coverage", 0.0))
+        if current_cov >= start_thr:
+            j = i
+            low_count = 0
+            steps = 0
+            while j < len(line_rows) and steps < max_run:
+                probe_cov = float(line_rows[j].get("line_strike_coverage", 0.0))
+                if j > i and _is_strong_live_start(line_rows[j]["raw_text"], probe_cov, settings):
+                    break
+                suppressed.add(j)
+                if probe_cov < end_thr:
+                    low_count += 1
+                else:
+                    low_count = 0
+                if low_count >= end_patience:
+                    break
+                j += 1
+                steps += 1
+            i = j + 1
+            continue
+        if line_rows[i].get("full_line_struck"):
+            suppressed.add(i)
+        i += 1
+    return suppressed
+
+
+def _suppressed_body_line_indexes(
+    line_rows: list[dict],
+    *,
+    section: str,
+    settings: Settings | None = None,
+) -> set[int]:
+    settings = settings or Settings()
+    if section == "part2":
+        return _suppressed_body_line_indexes_part2(line_rows, settings)
+    return _suppressed_body_line_indexes_riders(line_rows, settings)
+
+
 def _reconstruct_clause_residual(
     clause: DraftClause,
     *,
     line_by_id: dict[str, dict],
     word_by_id: dict[str, dict],
+    page_strike_segments: dict[int, list[dict]],
+    settings: Settings,
 ) -> tuple[str, str, list[dict]]:
-    title_rows = [_line_strike_snapshot(line_by_id[line_id], word_by_id) for line_id in clause.title_line_ids if line_id in line_by_id]
-    body_rows = [_line_strike_snapshot(line_by_id[line_id], word_by_id) for line_id in clause.body_line_ids if line_id in line_by_id]
-    suppressed_indexes = _suppressed_body_line_indexes(body_rows)
+    title_rows = [
+        _line_strike_snapshot(
+            line_by_id[line_id],
+            word_by_id,
+            page_strike_segments=page_strike_segments,
+            settings=settings,
+        )
+        for line_id in clause.title_line_ids
+        if line_id in line_by_id
+    ]
+    body_rows = [
+        _line_strike_snapshot(
+            line_by_id[line_id],
+            word_by_id,
+            page_strike_segments=page_strike_segments,
+            settings=settings,
+        )
+        for line_id in clause.body_line_ids
+        if line_id in line_by_id
+    ]
+    suppressed_indexes = _suppressed_body_line_indexes(body_rows, section=clause.section, settings=settings)
     kept_body_rows = [row for idx, row in enumerate(body_rows) if idx not in suppressed_indexes and row["live_text"]]
 
     if title_rows and kept_body_rows and kept_body_rows[0]["live_text"][:1].islower() and any(row["struck_word_count"] > 0 for row in body_rows):
@@ -1188,7 +1340,7 @@ def _reconstruct_clause_residual(
     return residual_title, residual_body, title_rows + body_rows
 
 
-def _residual_recommendation(raw_title: str, raw_body: str, residual_title: str, residual_body: str) -> dict:
+def _residual_recommendation(raw_title: str, raw_body: str, residual_title: str, residual_body: str, *, section: str) -> dict:
     raw_title_norm = normalize_ws(raw_title)
     raw_body_norm = normalize_ws(raw_body)
     residual_title_norm = normalize_ws(residual_title)
@@ -1200,13 +1352,21 @@ def _residual_recommendation(raw_title: str, raw_body: str, residual_title: str,
     longest_segment = max((len(segment) for segment in segments), default=0)
     keep = alpha_chars >= 6 and (word_count >= 2 or longest_segment >= 12)
     reason = "meaningful_residual_content"
+    title_alpha_chars = sum(1 for ch in residual_title_norm if ch.isalpha())
+    title_word_count = len(ALPHA_WORD_RE.findall(residual_title_norm))
+    title_segments = _meaningful_segments(residual_title_norm)
+    title_longest_segment = max((len(segment) for segment in title_segments), default=0)
     if not residual_combined:
         reason = "empty_after_cleanup"
     elif alpha_chars == 0:
         reason = "non_alpha_residual_only"
     elif raw_body_norm and not residual_body_norm:
-        keep = False
-        reason = "body_removed_by_strike_cleanup"
+        if section in {"shell", "essar"} and title_alpha_chars >= 6 and (title_word_count >= 2 or title_longest_segment >= 12):
+            keep = True
+            reason = "heading_only_survival"
+        else:
+            keep = False
+            reason = "body_removed_by_strike_cleanup"
     elif word_count < 2 and longest_segment < 12:
         reason = "residual_too_fragmentary"
     return {
@@ -1228,9 +1388,12 @@ def _apply_residual_cleanup(
     clauses: list[DraftClause],
     *,
     pages: list[PageIR],
+    pdf_path: str | Path,
+    settings: Settings,
 ) -> list[DraftClause]:
     line_by_id = _line_lookup_from_pages(pages)
     word_by_id = _word_lookup_from_pages(pages)
+    page_strike_segments = _page_strike_segments(str(pdf_path), {page.page_index for page in pages})
     cleaned: list[DraftClause] = []
     for clause in clauses:
         if clause.id in MANUALLY_CONFIRMED_STRUCK_SUPPRESS_IDS:
@@ -1241,11 +1404,17 @@ def _apply_residual_cleanup(
             clause,
             line_by_id=line_by_id,
             word_by_id=word_by_id,
+            page_strike_segments=page_strike_segments,
+            settings=settings,
         )
-        if not any(row["struck_word_count"] > 0 for row in line_rows):
+        has_word_level_strike = any(row["struck_word_count"] > 0 for row in line_rows)
+        has_line_level_strike = any(
+            float(row.get("line_strike_coverage", 0.0)) >= settings.strike.block_start_coverage for row in line_rows
+        )
+        if not has_word_level_strike and not has_line_level_strike:
             cleaned.append(clause)
             continue
-        residual = _residual_recommendation(raw_title, raw_body, residual_title, residual_body)
+        residual = _residual_recommendation(raw_title, raw_body, residual_title, residual_body, section=clause.section)
         if residual["recommendation"] == "suppress":
             continue
         cleaned.append(
@@ -1273,7 +1442,12 @@ def _refresh_assembly_diag(clauses: list[DraftClause], assembly_diag: dict) -> d
     return assembly_diag
 
 
-def _build_page_strike_profile(pages: list[PageIR]) -> dict:
+def _build_page_strike_profile(
+    pages: list[PageIR],
+    *,
+    page_strike_segments: dict[int, list[dict]],
+    settings: Settings,
+) -> dict:
     word_by_id = _word_lookup_from_pages(pages)
     page_rows: list[dict] = []
     total_words = 0
@@ -1290,8 +1464,13 @@ def _build_page_strike_profile(pages: list[PageIR]) -> dict:
         top_lines: list[dict] = []
         lines_with_struck = 0
         for line in page.lines:
-            snapshot = _line_strike_snapshot(line.model_dump(), word_by_id)
-            if snapshot["struck_word_count"] == 0:
+            snapshot = _line_strike_snapshot(
+                line.model_dump(),
+                word_by_id,
+                page_strike_segments=page_strike_segments,
+                settings=settings,
+            )
+            if snapshot["struck_word_count"] == 0 and snapshot["line_strike_coverage"] < settings.strike.block_start_coverage:
                 continue
             lines_with_struck += 1
             page_source_counts.update(snapshot["strike_source_counts"])
@@ -1331,6 +1510,7 @@ def _clause_key(clause) -> tuple[str, int, int]:
 
 def _build_strike_stage_diagnostics(
     *,
+    pdf_path: str | Path,
     pages: list[PageIR],
     current_clauses: list[DraftClause],
     reference_clauses: list[Clause],
@@ -1338,10 +1518,12 @@ def _build_strike_stage_diagnostics(
     current_label: str,
     deterministic_clauses: list[DraftClause] | None = None,
     adjudicated_available: bool = False,
+    settings: Settings,
 ) -> dict:
-    page_profile = _build_page_strike_profile(pages)
     line_by_id = _line_lookup_from_pages(pages)
     word_by_id = _word_lookup_from_pages(pages)
+    page_strike_segments = _page_strike_segments(str(pdf_path), {page.page_index for page in pages})
+    page_profile = _build_page_strike_profile(pages, page_strike_segments=page_strike_segments, settings=settings)
     reference_by_id = {clause.id: clause.model_dump() for clause in reference_clauses}
     current_by_key = {_clause_key(clause): clause.model_dump() for clause in current_clauses}
     deterministic_by_id = {clause.id: clause.model_dump() for clause in (deterministic_clauses or [])}
@@ -1358,13 +1540,22 @@ def _build_strike_stage_diagnostics(
             reasons.append("extra_clause")
         raw_title = _raw_text_from_line_ids(clause.title_line_ids, line_by_id)
         raw_body = _raw_text_from_line_ids(clause.body_line_ids, line_by_id)
-        residual = _residual_recommendation(raw_title, raw_body, clause.title, clause.text)
+        residual = _residual_recommendation(raw_title, raw_body, clause.title, clause.text, section=clause.section)
         if residual["body_struck_ratio"] >= 0.45 or residual["title_struck_ratio"] >= 0.75:
             reasons.append("high_strike_ratio")
         if not reasons:
             continue
         line_ids = list(dict.fromkeys(clause.title_line_ids + clause.body_line_ids))
-        line_rows = [_line_strike_snapshot(line_by_id[line_id], word_by_id) for line_id in line_ids if line_id in line_by_id]
+        line_rows = [
+            _line_strike_snapshot(
+                line_by_id[line_id],
+                word_by_id,
+                page_strike_segments=page_strike_segments,
+                settings=settings,
+            )
+            for line_id in line_ids
+            if line_id in line_by_id
+        ]
         source_counts: Counter = Counter()
         for row in line_rows:
             source_counts.update(row["strike_source_counts"])
@@ -1383,7 +1574,9 @@ def _build_strike_stage_diagnostics(
                     "line_rows": line_rows,
                     "struck_word_ids": [word_id for row in line_rows for word_id in row["struck_word_ids"]],
                     "strike_source_counts": dict(sorted(source_counts.items())),
-                    "evidence_modes": sorted({row["strike_evidence_mode"] for row in line_rows if row["struck_word_count"] > 0}),
+                    "evidence_modes": sorted(
+                        {row["strike_evidence_mode"] for row in line_rows if row["struck_word_count"] > 0 or row["line_strike_coverage"] > 0}
+                    ),
                 },
                 "residual": {
                     **residual,
@@ -1791,7 +1984,7 @@ def run_unified_draft(pdf_path: str | Path, out_path: str | Path, settings: Sett
     _write_md_dual(candidate_md_path, candidate_md_archived_path, candidate_md)
 
     clauses, assembly_diag = assemble_draft_clauses(blocks)
-    clauses = _apply_residual_cleanup(clauses, pages=pages)
+    clauses = _apply_residual_cleanup(clauses, pages=pages, pdf_path=pdf_path, settings=settings)
     assembly_diag = _refresh_assembly_diag(clauses, assembly_diag)
     clause_rows = [clause.model_dump() for clause in clauses]
     assert_json_data_valid(clause_rows, "clauses_unified.schema.json", label="clauses_unified.json")
@@ -1887,6 +2080,7 @@ def run_unified_draft(pdf_path: str | Path, out_path: str | Path, settings: Sett
     )
 
     strike_stage_diagnostics = _build_strike_stage_diagnostics(
+        pdf_path=pdf_path,
         pages=pages,
         current_clauses=clauses,
         reference_clauses=reference_clauses,
@@ -1894,6 +2088,7 @@ def run_unified_draft(pdf_path: str | Path, out_path: str | Path, settings: Sett
         current_label="Deterministic Unified",
         deterministic_clauses=clauses,
         adjudicated_available=False,
+        settings=settings,
     )
     strike_stage_diagnostics_path = runs_dir / "strike_stage_diagnostics.json"
     strike_stage_diagnostics_archived_path = run_dir / "strike_stage_diagnostics.json"
@@ -2033,7 +2228,12 @@ def run_unified_adjudicated_draft(pdf_path: str | Path, out_path: str | Path, se
     _write_jsonl_dual(deterministic_block_path, deterministic_block_archived_path, deterministic_block_rows)
 
     deterministic_clauses, deterministic_assembly_diag = assemble_draft_clauses(blocks)
-    deterministic_clauses = _apply_residual_cleanup(deterministic_clauses, pages=pages)
+    deterministic_clauses = _apply_residual_cleanup(
+        deterministic_clauses,
+        pages=pages,
+        pdf_path=pdf_path,
+        settings=settings,
+    )
     deterministic_assembly_diag = _refresh_assembly_diag(deterministic_clauses, deterministic_assembly_diag)
     deterministic_clause_rows = [clause.model_dump() for clause in deterministic_clauses]
     assert_json_data_valid(deterministic_clause_rows, "clauses_unified.schema.json", label="clauses_unified_m2.json")
@@ -2089,7 +2289,7 @@ def run_unified_adjudicated_draft(pdf_path: str | Path, out_path: str | Path, se
     _write_jsonl_dual(adjudicated_block_path, adjudicated_block_archived_path, adjudicated_block_rows)
 
     clauses, assembly_diag = assemble_draft_clauses(adjudicated_blocks)
-    clauses = _apply_residual_cleanup(clauses, pages=pages)
+    clauses = _apply_residual_cleanup(clauses, pages=pages, pdf_path=pdf_path, settings=settings)
     assembly_diag = _refresh_assembly_diag(clauses, assembly_diag)
     clause_rows = [clause.model_dump() for clause in clauses]
     assert_json_data_valid(clause_rows, "clauses_unified.schema.json", label="clauses_unified_adjudicated.json")
@@ -2237,6 +2437,7 @@ def run_unified_adjudicated_draft(pdf_path: str | Path, out_path: str | Path, se
     )
 
     strike_stage_diagnostics = _build_strike_stage_diagnostics(
+        pdf_path=pdf_path,
         pages=pages,
         current_clauses=clauses,
         reference_clauses=reference_clauses,
@@ -2244,6 +2445,7 @@ def run_unified_adjudicated_draft(pdf_path: str | Path, out_path: str | Path, se
         current_label="Adjudicated M3",
         deterministic_clauses=deterministic_clauses,
         adjudicated_available=True,
+        settings=settings,
     )
     strike_stage_diagnostics_path = runs_dir / "strike_stage_diagnostics.json"
     strike_stage_diagnostics_archived_path = run_dir / "strike_stage_diagnostics.json"
@@ -2375,6 +2577,380 @@ def run_unified_adjudicated_draft(pdf_path: str | Path, out_path: str | Path, se
     )
     publish_run_report("unified_adjudicated", report)
     return clauses
+
+
+def _strike_fallback_command(
+    pdf_path: str | Path,
+    source_json: str | Path,
+    source_assembly_report: str | Path,
+    source_bad_clause_review: str | Path,
+    source_strike_diagnostics: str | Path,
+) -> str:
+    return (
+        "python -m charter_parser.cli strike-fallback "
+        f"--pdf {pdf_path} "
+        f"--source-json {source_json} "
+        f"--source-assembly-report {source_assembly_report} "
+        f"--source-bad-clause-review {source_bad_clause_review} "
+        f"--source-strike-diagnostics {source_strike_diagnostics} "
+        "--config configs/default.yaml"
+    )
+
+
+def _strike_fallback_shortlist(
+    clauses: list[DraftClause],
+    *,
+    assembly_report: dict,
+    bad_clause_review: dict,
+    strike_diagnostics: dict,
+) -> dict[str, list[str]]:
+    live_ids = {clause.id for clause in clauses}
+    reasons: dict[str, set[str]] = {}
+
+    def add_reason(clause_id: str, reason: str) -> None:
+        if clause_id not in live_ids:
+            return
+        reasons.setdefault(clause_id, set()).add(reason)
+
+    for clause_id in assembly_report["comparisons"]["vs_reference"]["extra_ids"]:
+        add_reason(clause_id, "survives_without_reference_match")
+
+    for case in bad_clause_review.get("cases", []):
+        clause_id = case.get("clause_id")
+        if not clause_id:
+            continue
+        diagnostic_class = case.get("diagnostic_class")
+        if diagnostic_class == "strike_evidence_gap":
+            add_reason(clause_id, "bad_clause_review")
+            add_reason(clause_id, "strike_evidence_gap")
+        if diagnostic_class in {"true_strike_suppress_candidate", "mostly_struck_but_keep_residual"}:
+            add_reason(clause_id, "bad_clause_review")
+        if "extra_clause" in case.get("why_selected", []):
+            add_reason(clause_id, "extra_clause_shortlist")
+
+    for case in strike_diagnostics.get("selected_clause_cases", []):
+        clause_id = case.get("clause_id")
+        if not clause_id:
+            continue
+        if "extra_clause" in case.get("why_selected", []):
+            add_reason(clause_id, "strike_diagnostics_extra_clause")
+        residual = case.get("residual") or {}
+        if residual.get("recommendation") == "suppress" and "extra_clause" in case.get("why_selected", []):
+            add_reason(clause_id, "ambiguous_residual_validity")
+
+    return {clause_id: sorted(reason_set) for clause_id, reason_set in sorted(reasons.items())}
+
+
+def _average_similarity(candidate_title: str, candidate_text: str, reference: Clause | None) -> float | None:
+    if reference is None:
+        return None
+    return round((_text_similarity(candidate_title, reference.title) + _text_similarity(candidate_text, reference.text)) / 2.0, 4)
+
+
+def _fallback_case_diagnosis(
+    *,
+    clause_id: str,
+    decision: str,
+    reference: Clause | None,
+    current_score: float | None,
+    fallback_score: float | None,
+) -> str:
+    if reference is None:
+        if decision == "suppress_clause":
+            return "improved"
+        if decision == "use_fallback_cleaned":
+            return "still_ambiguous"
+        return "unchanged"
+    if decision == "suppress_clause":
+        return "worsened"
+    if fallback_score is None or current_score is None:
+        return "still_ambiguous"
+    if fallback_score > current_score + 0.01:
+        return "improved"
+    if fallback_score < current_score - 0.01:
+        return "worsened"
+    return "unchanged"
+
+
+def _strike_fallback_review_markdown(report: dict) -> str:
+    lines = [
+        "# Strike Fallback Review",
+        "",
+        "## Summary",
+        "",
+        f"- reviewed_case_count: {report['summary']['reviewed_case_count']}",
+        f"- decision_counts: {report['summary']['decision_counts']}",
+        f"- touched_clause_ids: {report['summary']['touched_clause_ids']}",
+        "",
+    ]
+    for case in report["cases"]:
+        lines.extend(
+            [
+                f"## {case['clause_id']}",
+                "",
+                f"- why_sent_to_fallback: {case['why_sent_to_fallback']}",
+                f"- final_decision: {case['final_decision']}",
+                f"- diagnosis: {case['diagnosis']}",
+                "",
+                "Current accepted output",
+                f"- title: {_preview(case['current_output']['title'], 160)}",
+                f"- text: {_preview(case['current_output']['text'], 240)}",
+                "",
+                "Fallback cleaned output",
+                f"- title: {_preview(case['fallback_cleaned']['title'], 160)}",
+                f"- text: {_preview(case['fallback_cleaned']['text'], 240)}",
+                f"- recommendation: {case['fallback_cleaned']['recommendation']}",
+                f"- reason: {case['fallback_cleaned']['reason']}",
+                "",
+                "Reference preview",
+                f"- present: {case['reference_preview'] is not None}",
+            ]
+        )
+        if case["reference_preview"] is not None:
+            lines.append(f"- title: {_preview(case['reference_preview']['title'], 160)}")
+            lines.append(f"- text: {_preview(case['reference_preview']['text'], 240)}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def run_strike_fallback_review(
+    pdf_path: str | Path,
+    *,
+    source_json: str | Path,
+    source_assembly_report: str | Path,
+    source_bad_clause_review: str | Path,
+    source_strike_diagnostics: str | Path,
+    settings: Settings,
+) -> list[DraftClause]:
+    runs_dir = _runs_dir()
+    run_id = new_run_id("strike_fallback")
+    run_dir = _history_dir(run_id)
+    started_at = utc_now_iso()
+
+    pages, _profile, probe_report = _load_fresh_probe_inputs(pdf_path, settings)
+    reference_clauses = [Clause(**row) for row in read_json(settings.project.golden_path)]
+    reference_by_id = {clause.id: clause for clause in reference_clauses}
+
+    source_clauses = [DraftClause(**row) for row in read_json(source_json)]
+    source_assembly = read_json(source_assembly_report)
+    source_bad_clause_review_payload = read_json(source_bad_clause_review)
+    source_strike_diagnostics_payload = read_json(source_strike_diagnostics)
+
+    shortlist = _strike_fallback_shortlist(
+        source_clauses,
+        assembly_report=source_assembly,
+        bad_clause_review=source_bad_clause_review_payload,
+        strike_diagnostics=source_strike_diagnostics_payload,
+    )
+
+    line_by_id = _line_lookup_from_pages(pages)
+    word_by_id = _word_lookup_from_pages(pages)
+    page_strike_segments = _page_strike_segments(str(pdf_path), {page.page_index for page in pages})
+    source_extra_ids = set(source_assembly["comparisons"]["vs_reference"]["extra_ids"])
+
+    updated_clauses: list[DraftClause] = []
+    review_cases: list[dict] = []
+    decision_counts: Counter = Counter()
+
+    for clause in source_clauses:
+        reasons = shortlist.get(clause.id)
+        if not reasons:
+            updated_clauses.append(clause)
+            continue
+
+        raw_title = _raw_text_from_line_ids(clause.title_line_ids, line_by_id)
+        raw_body = _raw_text_from_line_ids(clause.body_line_ids, line_by_id)
+        fallback_title, fallback_body, line_rows = _reconstruct_clause_residual(
+            clause,
+            line_by_id=line_by_id,
+            word_by_id=word_by_id,
+            page_strike_segments=page_strike_segments,
+            settings=settings,
+        )
+        fallback_residual = _residual_recommendation(
+            raw_title,
+            raw_body,
+            fallback_title,
+            fallback_body,
+            section=clause.section,
+        )
+        reference = reference_by_id.get(clause.id)
+        current_score = _average_similarity(clause.title, clause.text, reference)
+        fallback_score = _average_similarity(fallback_title, fallback_body, reference)
+        high_strike = any(float(row.get("line_strike_coverage", 0.0)) >= settings.strike.full_line_coverage for row in line_rows)
+
+        decision = "keep_current"
+        if fallback_residual["recommendation"] == "suppress" and (clause.id in source_extra_ids or high_strike):
+            decision = "suppress_clause"
+        elif fallback_residual["recommendation"] == "keep" and (fallback_title != clause.title or fallback_body != clause.text):
+            if reference is None:
+                decision = "use_fallback_cleaned"
+            elif fallback_score is not None and current_score is not None and fallback_score > current_score + 0.01:
+                decision = "use_fallback_cleaned"
+
+        diagnosis = _fallback_case_diagnosis(
+            clause_id=clause.id,
+            decision=decision,
+            reference=reference,
+            current_score=current_score,
+            fallback_score=fallback_score,
+        )
+        decision_counts.update([decision])
+
+        review_cases.append(
+            {
+                "clause_id": clause.id,
+                "why_sent_to_fallback": reasons,
+                "current_output": clause.model_dump(),
+                "fallback_cleaned": {
+                    "title": fallback_title,
+                    "text": fallback_body,
+                    "recommendation": fallback_residual["recommendation"],
+                    "reason": fallback_residual["reason"],
+                },
+                "fallback_line_rows": line_rows,
+                "final_decision": decision,
+                "reference_preview": reference.model_dump() if reference is not None else None,
+                "diagnosis": diagnosis,
+            }
+        )
+
+        if decision == "suppress_clause":
+            continue
+        if decision == "use_fallback_cleaned":
+            updated_clauses.append(
+                clause.model_copy(
+                    update={
+                        "title": fallback_title,
+                        "text": fallback_body,
+                    }
+                )
+            )
+            continue
+        updated_clauses.append(clause)
+
+    for index, clause in enumerate(updated_clauses, start=1):
+        clause.order = index
+
+    clause_rows = [clause.model_dump() for clause in updated_clauses]
+    assert_json_data_valid(clause_rows, "clauses_unified.schema.json", label="clauses_strike_fallback.json")
+    clause_path = runs_dir / "clauses_strike_fallback.json"
+    clause_archived_path = run_dir / "clauses_strike_fallback.json"
+    _write_json_dual(clause_path, clause_archived_path, clause_rows)
+
+    vs_reference = compare_clause_sets(updated_clauses, reference_clauses)
+    vs_source = compare_clause_sets(updated_clauses, source_clauses)
+    metrics = {
+        "unified_clause_count": len(updated_clauses),
+        "legacy_clause_count": len(source_clauses),
+        "reference_clause_count": len(reference_clauses),
+        "duplicate_ids": duplicate_ids(updated_clauses),
+        "order_violations": order_violations(updated_clauses),
+        "banner_leaks": banner_leaks(updated_clauses),
+        "empty_text_ids": empty_text_ids(updated_clauses),
+        "boundary_alignment_proxy_vs_reference": vs_reference["id_sequence_match_ratio"],
+        "body_text_overlap_proxy_vs_reference": vs_reference["text_similarity_mean"],
+        "normalized_title_similarity_vs_reference": vs_reference["title_similarity_mean"],
+        "split_merge_error_proxy": len(vs_reference["missing_ids"]) + len(vs_reference["extra_ids"]),
+        "section_distribution": _section_distribution(updated_clauses, "section"),
+        "reviewed_case_count": len(review_cases),
+        "decision_counts": dict(sorted(decision_counts.items())),
+    }
+    assembly_report = {
+        "run_id": run_id,
+        "mode": "strike_fallback_assembly_report",
+        "metrics": metrics,
+        "comparisons": {
+            "vs_reference": vs_reference,
+            "vs_legacy": vs_source,
+        },
+        "failures": worst_mismatches(updated_clauses, reference_clauses),
+        "notes": [
+            "Strike fallback is applied only to shortlisted suspicious surviving clauses.",
+            "The accepted parser output is preserved for all non-shortlisted clauses.",
+        ],
+    }
+    assembly_report_path = runs_dir / "assembly_report_strike_fallback.json"
+    assembly_report_archived_path = run_dir / "assembly_report_strike_fallback.json"
+    _write_json_dual(assembly_report_path, assembly_report_archived_path, assembly_report)
+    assembly_md_path = runs_dir / "assembly_report_strike_fallback.md"
+    assembly_md_archived_path = run_dir / "assembly_report_strike_fallback.md"
+    _write_md_dual(assembly_md_path, assembly_md_archived_path, _assembly_markdown(assembly_report))
+
+    review_payload = {
+        "run_id": run_id,
+        "source_clause_count": len(source_clauses),
+        "summary": {
+            "reviewed_case_count": len(review_cases),
+            "decision_counts": dict(sorted(decision_counts.items())),
+            "touched_clause_ids": sorted(case["clause_id"] for case in review_cases if case["final_decision"] != "keep_current"),
+        },
+        "cases": review_cases,
+    }
+    review_path = runs_dir / "strike_fallback_review.json"
+    review_archived_path = run_dir / "strike_fallback_review.json"
+    _write_json_dual(review_path, review_archived_path, review_payload)
+    review_md_path = runs_dir / "strike_fallback_review.md"
+    review_archived_md_path = run_dir / "strike_fallback_review.md"
+    _write_md_dual(review_md_path, review_archived_md_path, _strike_fallback_review_markdown(review_payload))
+
+    freshness_checks = [
+        ensure_fresh_output(clause_path, [source_json, runs_dir / "page_ir.jsonl"]),
+        ensure_fresh_output(assembly_report_path, [clause_path]),
+        ensure_fresh_output(review_path, [clause_path, assembly_report_path]),
+    ]
+    finished_at = utc_now_iso()
+    report = RunReport(
+        run_id=run_id,
+        mode="strike_fallback",
+        command=_strike_fallback_command(
+            pdf_path,
+            source_json,
+            source_assembly_report,
+            source_bad_clause_review,
+            source_strike_diagnostics,
+        ),
+        started_at=started_at,
+        finished_at=finished_at,
+        pdf_path=str(pdf_path),
+        artifacts={
+            "clauses_strike_fallback": repo_rel(clause_path),
+            "assembly_report_strike_fallback_json": repo_rel(assembly_report_path),
+            "assembly_report_strike_fallback_md": repo_rel(assembly_md_path),
+            "strike_fallback_review_json": repo_rel(review_path),
+            "strike_fallback_review_md": repo_rel(review_md_path),
+        },
+        inputs={
+            "pdf": fingerprint(pdf_path, role="input"),
+            "probe_report": {
+                "path": probe_report["archived_report_path"],
+                "role": "derived",
+                "run_id": probe_report["run_id"],
+            },
+            "source_json": fingerprint(source_json, role="generated"),
+            "source_assembly_report": fingerprint(source_assembly_report, role="generated"),
+            "source_bad_clause_review": fingerprint(source_bad_clause_review, role="generated"),
+            "source_strike_diagnostics": fingerprint(source_strike_diagnostics, role="generated"),
+            "golden": fingerprint(settings.project.golden_path, role="reference"),
+        },
+        artifact_provenance={
+            "clauses_strike_fallback": fingerprint(clause_path, role="generated"),
+            "assembly_report_strike_fallback_json": fingerprint(assembly_report_path, role="generated"),
+            "strike_fallback_review_json": fingerprint(review_path, role="generated"),
+        },
+        metrics=metrics,
+        freshness={
+            "status": "fresh",
+            "checks": freshness_checks,
+            "consumed_probe_run_id": probe_report["run_id"],
+        },
+        notes=[
+            "This mode is a narrow repair layer on top of an existing accepted adjudicated clause set.",
+            "Fallback decisions are limited to shortlisted suspicious surviving clauses only.",
+        ],
+    )
+    publish_run_report("strike_fallback", report)
+    return updated_clauses
 
 
 def run_pipeline(pdf_path: str | Path, out_path: str | Path, settings: Settings, mode: str = "legacy"):

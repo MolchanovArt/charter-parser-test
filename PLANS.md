@@ -83,6 +83,13 @@ Replace the current two-script solution with one pipeline that preserves or impr
 - expand reference/eval set from failures;
 - block merges on regressions.
 
+##### Current experiment — `m7_legacy_strike_integration_gate_v1`
+- inspect legacy strike handling only, and separate portable strike behaviors from overfit clause/section assembly logic;
+- keep the accepted `main` unified parser architecture and adjudication flow unchanged, except where needed to insert earlier deterministic strike suppression;
+- evaluate only generalized strike mechanisms: vector strike segment collection, union coverage for full-line drop, main-column-only suppression on mixed heading/body rows, and block suppression with live-start escape;
+- reject document-specific layout hacks, page/section special cases, clause-id-specific suppression, and any legacy clause assembly import;
+- stop immediately if the experiment does not clearly improve the remaining struck-clause errors without regressing aggregate metrics or guard cases.
+
 ### Validation after each milestone
 
 ```bash
