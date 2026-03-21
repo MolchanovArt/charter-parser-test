@@ -1,110 +1,83 @@
-# Charter Parser — Codex Core
+# Charter Parser Core
 
-Минимальное, но рабочее ядро репозитория для поэтапной реализации generalized charter-party clause parser.
+This project extracts ordered charter-party clauses from a source PDF and writes them as structured JSON. The accepted submission result is the current baseline output from `main`.
 
-Цель репозитория:
-- сохранить текущий baseline;
-- быстро поднять **eval-driven** контур;
-- начать с **geometry-first** пайплайна;
-- использовать LLM только для **структурной разметки неоднозначных мест**;
-- оставить VLM только как **селективный fallback**.
+## Install
 
-## Что уже есть
-
-- `legacy/` — текущая baseline-реализация в двух скриптах.
-- `artifacts/golden/clauses_merged.json` — seed reference set для regression checks.
-- `src/charter_parser/` — минимальный unified scaffold.
-- `schemas/` — схемы для output, page IR, layout profile, line selection, reports.
-- `docs/` — краткие и жесткие repo-level правила для Codex.
-
-## Главный принцип
-
-Финальный `clause.text` всегда должен собираться **из исходных spans/lines**, а не генерироваться моделью с нуля.
-
-Модель разрешена для:
-- выбора line/block boundaries;
-- title/body separation;
-- ambiguous attach / split / merge decisions;
-- selective page repair;
-- visual fallback только на flagged pages.
-
-## Быстрый старт
-
-### 1. Скачай PDF
+Recommended:
 
 ```bash
-bash scripts/download_source_pdf.sh
+uv sync --extra dev
 ```
 
-### 2. Установи зависимости
-
-```bash
-uv sync
-cp .env.example .env
-```
-
-или
+Alternative:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
-cp .env.example .env
 ```
 
-### 3. Прогони baseline
+The accepted baseline does not require `OPENAI_API_KEY`.
+
+`.env` is optional and is only needed for experimental model-based paths. Baseline extraction, validation, evaluation, probing, and submission artifact generation run without it.
+
+If the sample PDF is missing:
+
+```bash
+bash scripts/download_source_pdf.sh
+```
+
+## Main Command Sequence
+
+Run the accepted baseline and supporting checks:
 
 ```bash
 make baseline
 make validate
 make eval
-```
-
-### 4. Сними геометрическую разведку
-
-```bash
 make probe
+make unified
+make unified-adjudicated
+mkdir -p submission
+cp artifacts/runs/latest/clauses.json submission/final_clauses.json
+cp artifacts/runs/latest/eval_report.json submission/final_eval_report.json
+cp artifacts/runs/latest/eval_report.md submission/final_eval_report.md
 ```
 
-Это создаст:
-- `artifacts/runs/latest/page_ir.jsonl`
-- `artifacts/runs/latest/layout_profile.json`
-- `artifacts/runs/latest/run_report.json`
-
-### 5. Запусти Codex в корне репозитория
+Docker alternative:
 
 ```bash
-codex -m gpt-5.4
+docker build -t charter-parser-core .
+docker run --rm -v "$PWD:/workspace" -w /workspace charter-parser-core bash -lc "rm -rf artifacts/runs/latest submission && make baseline && make validate && make eval && make probe && make unified && make unified-adjudicated && mkdir -p submission && cp artifacts/runs/latest/clauses.json submission/final_clauses.json && cp artifacts/runs/latest/eval_report.json submission/final_eval_report.json && cp artifacts/runs/latest/eval_report.md submission/final_eval_report.md"
 ```
 
-Первый запрос для Codex:
+## What Gets Written
 
-```text
-Read README.md, AGENTS.md, TASK.md, EVAL.md, docs/architecture.md, docs/problem_cases.md and PLANS.md.
-Then run make baseline, make validate, make eval, and make probe.
-Summarize the current system, its metrics, and propose the smallest Milestone 1 implementation plan.
-```
+Accepted baseline output:
 
-## Обязательные outputs каждого нормального run
-
-Минимум:
 - `artifacts/runs/latest/clauses.json`
-- `artifacts/runs/latest/run_report.json`
+- `submission/final_clauses.json`
+
+Baseline evaluation against the frozen reference:
+
 - `artifacts/runs/latest/eval_report.json`
 - `artifacts/runs/latest/eval_report.md`
+- `submission/final_eval_report.json`
+- `submission/final_eval_report.md`
 
-При запуске геометрической разведки:
+Supporting probe and comparison artifacts:
+
 - `artifacts/runs/latest/page_ir.jsonl`
 - `artifacts/runs/latest/layout_profile.json`
+- `artifacts/runs/latest/clauses_unified.json`
+- `artifacts/runs/latest/clauses_unified_adjudicated.json`
 
-## Минимальный маршрут к финальному решению
+`artifacts/golden/clauses_merged.json` is reference material only. It is not the submission output.
 
-1. Зафиксировать baseline и eval.
-2. Собрать unified `PageIR` на PyMuPDF.
-3. Добавить automatic geometric reconnaissance.
-4. Собрать deterministic candidate generation.
-5. Подключить `gpt-5.4` только для line/block adjudication.
-6. Добавить selective visual fallback.
-7. Перейти к active loop по grader failures.
+## Notes
 
-Подробности в `PLANS.md`.
+- Public submission docs: `README.md`, `FINAL_REPORT.md`
+- Agent runbook: `docs/AGENT_RUN.md`
+- Technical notes: `docs/architecture.md`, `docs/problem_cases.md`
+- Internal records: `docs/internal/`

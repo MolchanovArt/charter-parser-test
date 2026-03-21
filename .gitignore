@@ -10,4 +10,8 @@ __pycache__/
 .mypy_cache/
 .coverage
 htmlcov/
+.codex/
+.codex-merge-backups/
+local-environments-settings-page-*.js
+worktree-*.js
 artifacts/runs/

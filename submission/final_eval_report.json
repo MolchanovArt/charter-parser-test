@@ -1,0 +1,74 @@
+{
+  "archived_report_path": "artifacts/runs/history/20260317T225033366679Z-eval/eval_report.json",
+  "artifact_provenance": {
+    "candidate": {
+      "mtime_ns": 1773787831939449772,
+      "path": "artifacts/runs/latest/clauses.json",
+      "role": "generated",
+      "sha256": "aaef760a35a53430c4add78c761fab04a04451b61e6a222f8f05613f74e16987",
+      "size": 96280
+    },
+    "golden": {
+      "mtime_ns": 1773538485000000000,
+      "path": "artifacts/golden/clauses_merged.json",
+      "role": "reference",
+      "sha256": "94ba0b39b1beab650678bc29d9bd265b4384a18975e64d98fadd615441f64133",
+      "size": 96350
+    }
+  },
+  "candidate_path": "artifacts/runs/latest/clauses.json",
+  "command": "python scripts/eval_against_reference.py --golden artifacts/golden/clauses_merged.json --candidate artifacts/runs/latest/clauses.json",
+  "finished_at": "2026-03-17T22:50:33Z",
+  "freshness": {
+    "consumed_mode": "baseline",
+    "consumed_run_id": "20260317T225026991997Z-baseline",
+    "status": "fresh"
+  },
+  "golden_path": "artifacts/golden/clauses_merged.json",
+  "inputs": {
+    "baseline_report": {
+      "path": "artifacts/runs/history/20260317T225026991997Z-baseline/baseline_report.json",
+      "role": "derived",
+      "run_id": "20260317T225026991997Z-baseline"
+    },
+    "candidate_pdf": {
+      "mtime_ns": 1773539015000000000,
+      "path": "data/raw/voyage-charter-example.pdf",
+      "role": "input",
+      "sha256": "b3b47e4914757cadd3d260abe4df1195189892be99656389790a0c69034dc4e7",
+      "size": 209689
+    },
+    "golden": {
+      "mtime_ns": 1773538485000000000,
+      "path": "artifacts/golden/clauses_merged.json",
+      "role": "reference",
+      "sha256": "94ba0b39b1beab650678bc29d9bd265b4384a18975e64d98fadd615441f64133",
+      "size": 96350
+    }
+  },
+  "metrics": {
+    "banner_leaks": [],
+    "candidate_count": 91,
+    "count_delta": 0,
+    "duplicate_ids": [],
+    "empty_text_ids": [
+      "part2:21",
+      "part2:27",
+      "part2:38",
+      "essar:16",
+      "essar:18"
+    ],
+    "extra_ids": [],
+    "golden_count": 91,
+    "id_sequence_match_ratio": 1.0,
+    "missing_ids": [],
+    "order_violations": [],
+    "text_exact_match_ratio": 0.5824,
+    "text_similarity_mean": 0.9978,
+    "title_exact_match_ratio": 1.0
+  },
+  "mode": "eval",
+  "notes": [],
+  "run_id": "20260317T225033366679Z-eval",
+  "started_at": "2026-03-17T22:50:33Z"
+}
